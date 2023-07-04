@@ -1,6 +1,13 @@
-# Plan Better Amid Conservatism: Offline Multi-Agent Reinforcement Learning with Actor Rectification
+# omar with skill extraction
 
-This repository is the implementation of [Plan Better Amid Conservatism: Offline Multi-Agent Reinforcement Learning with Actor Rectification](https://proceedings.mlr.press/v162/pan22a/pan22a.pdf) in ICML 2022. This codebase is based on the open-source [maddpg-pytorch](https://github.com/shariqiqbal2810/maddpg-pytorch) framework, and please refer to that repo for more documentation.
+该部分代码仅对toy example进行了测试：三个智能体合作覆盖三个固定地标。
+
+面向多种合作策略混杂的数据集，使用CVAE对数据集将数据编码到隐藏空间，然后使用dbscan对隐藏变量聚类，得到离散的合作策略。为原始数据的添加其对应的合作策略种类，作为其隐藏状态。
+得到processed_data,使用omar进行训练。在执行动作时，隐藏状态skill从聚类得到的离散集合中选取，最终智能体将会按照所选取的合作策略执行动作。
+
+实验证明，添加策略提取后，智能体能够有效利用混杂数据集训练正确的合作策略。
+
+注意：训练时需要加上data_0(随机样本)作为负样本。
 
 ## Citing
 
@@ -25,12 +32,7 @@ Learning},
 - gym==0.9.4
 - Multi-Agent MuJoCo: Please check the [multiagent_mujoco](https://github.com/schroederdewitt/multiagent_mujoco) repo for more details about the environment. Note that this depends on gym with version 0.10.5.
 
-## Datasets
-Datasets for different tasks are available at the following links. Please download the datasets and decompress them to the datasets folder.
-- [HalfCheetah](https://drive.google.com/file/d/1zELoWUZoy3wPpwYni9t_TbzOjF4Px2f0/view?usp=sharing)
-- [Cooperative Navigation](https://drive.google.com/file/d/1YVk_ajtvbcq8R2m0u0RasfB0csToV7XP/view?usp=sharing)
-- [Predator-Prey](https://pan.baidu.com/s/16W-UyyCtfKDt9oTgeNOhJA): password is m7vw
-- [World](https://pan.baidu.com/s/1pjZmeIAlaepPpug3b5olGA): password is 5k3t
+
 
 Note: The datasets are too large, and the Baidu (Chinese) online disk requires a password for accessing it. Please just enter the password in the input box and click the blue button. The dataset can then be downloaded by cliking the "download" button (the second white button).
 
