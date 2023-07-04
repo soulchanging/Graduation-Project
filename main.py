@@ -13,8 +13,22 @@ import datetime
 import random
 import copy
 import shutil
+from env.TwoDots import TwoDots
+import abc
 
-from utils.env_wrappers import SubprocVecEnv, DummyVecEnv
+def create_env():
+   
+    env_args = type('self.config', (object,), {
+        'scenario_name': 'three_mapping',
+        'episode_length': 25,
+        'num_agents': 3,
+        'num_landmarks': 3,
+        'use_discrete_action': False,
+    })
+
+    env = TwoDots(env_args)
+    return env
+# from utils.env_wrappers import SubprocVecEnv, DummyVecEnv
 import h5py
 
 try:
@@ -22,18 +36,18 @@ try:
 except:
     print ('MujocoMulti not installed')
 
-def make_parallel_env(env_id, n_rollout_threads, seed, discrete_action):
-    def get_env_fn(rank):
-        def init_env():
-            env = make_env(env_id, discrete_action=discrete_action)
-            env.seed(seed + rank * 1000)
-            np.random.seed(seed + rank * 1000)
-            return env
-        return init_env
-    if n_rollout_threads == 1:
-        return DummyVecEnv([get_env_fn(0)])
-    else:
-        return SubprocVecEnv([get_env_fn(i) for i in range(n_rollout_threads)])
+# def make_parallel_env(env_id, n_rollout_threads, seed, discrete_action):
+#     def get_env_fn(rank):
+#         def init_env():
+#             env = make_env(env_id, discrete_action=discrete_action)
+#             env.seed(seed + rank * 1000)
+#             np.random.seed(seed + rank * 1000)
+#             return env
+#         return init_env
+#     if n_rollout_threads == 1:
+#         return DummyVecEnv([get_env_fn(0)])
+#     else:
+#         return SubprocVecEnv([get_env_fn(i) for i in range(n_rollout_threads)])
 
 def eval_policy(agent, env_name, seed, eval_episodes, discrete_action, env_args=None):
     if env_name in ['HalfCheetah-v2']:
@@ -65,21 +79,27 @@ def eval_policy(agent, env_name, seed, eval_episodes, discrete_action, env_args=
         return mean_episode_reward
     else:
         avg_predator_return = 0.
-    
-        env = make_parallel_env(env_name, 1, seed + 100, discrete_action)
 
+        # env = make_parallel_env(env_name, 1, seed + 100, discrete_action)
+        env = create_env()
+        eval_episodes = 1
+        config.episode_length = 5
+        results = []
         for ep_i in range(0, eval_episodes):
             obs = env.reset()
             agent.prep_rollouts(device='cpu')
-
+            print(obs)
             for et_i in range(config.episode_length):
-                torch_obs = [Variable(torch.Tensor(np.vstack(obs[:, i])), requires_grad=False) for i in range(agent.nagents)]
+                print("step",et_i)
+                torch_obs = [Variable(torch.Tensor(np.vstack([obs[i]])), requires_grad=False) for i in range(agent.nagents)]
                 torch_agent_actions = agent.step(torch_obs, explore=False)
                 agent_actions = [ac.data.numpy() for ac in torch_agent_actions]
                 actions = [[ac[i] for ac in agent_actions] for i in range(config.n_rollout_threads)]
-                
-                next_obs, rewards, dones, infos = env.step(actions)
-                
+                # print(actions[0])
+                next_obs, rewards, dones, infos = env.step(actions[0])
+                print("actions",actions)
+                print("next_obs",next_obs)
+                print("done",dones)
                 if env_name in ['simple_tag', 'simple_world']:
                     avg_predator_return += rewards[0][0]
                 else:
@@ -87,13 +107,15 @@ def eval_policy(agent, env_name, seed, eval_episodes, discrete_action, env_args=
                     avg_predator_return += avg_agent_reward
 
                 obs = next_obs
-
+            results.append(np.all(dones))
+            
+        print(results)
         avg_predator_return /= eval_episodes
         return avg_predator_return
 
 def offline_train(config):
-    outdir = prepare_output_dir(config.dir + '/' + config.env_id, argv=sys.argv)
-    print('\033[1;32mOutput files are saved in {} \033[1;0m'.format(outdir))
+    # outdir = prepare_output_dir(config.dir + '/' + config.env_id, argv=sys.argv)
+    # print('\033[1;32mOutput files are saved in {} \033[1;0m'.format(outdir))
 
     torch.manual_seed(config.seed)
     np.random.seed(config.seed)
@@ -106,7 +128,7 @@ def offline_train(config):
     torch.set_num_threads(config.n_training_threads)
 
     if config.env_id in ['simple_spread', 'simple_tag', 'simple_world']:
-        env = make_parallel_env(config.env_id, config.n_rollout_threads, config.seed, config.discrete_action)
+        env = create_env()
         env_args, env_info = None, None
     else:
         env_args = {"scenario": config.env_id, "episode_limit": 1000, "agent_conf": '2x3', "agent_obsk": 0,}
@@ -117,7 +139,7 @@ def offline_train(config):
 
         config.batch_size = 256
         config.hidden_dim = 256
-        config.lr = 0.0003
+        config.lr = 0.0001
         config.tau = 0.005
         config.gamma = 0.99
 
@@ -151,10 +173,26 @@ def offline_train(config):
             is_mamujoco=True,
             state_dims=[env_info['state_shape'] for _ in env.observation_space],
         )
-    replay_buffer.load_batch_data(config.dataset_dir)
+    dirs = []
+    
+    for i in [0,1,2,6]:
+        dir = 'processed_data/new_data_'+str(i)+'.npy'
+        dirs.append(dir)
+    replay_buffer.load_batch_data(dirs)
+    # dir0 = 'processed_data/new_data0.npy'
+    # dir = 'processed_data/new_data.npy'
+    # replay_buffer.load_batch_data([dir0,dir])
 
+    config.num_steps = 500000
+    config.eval_interval = 1000
+    
+    
+    
     for t in range(config.num_steps + 1):
+        # print(t)
         if t % config.eval_interval == 0 or t == config.num_steps:
+            print()
+            print("................training_episode%d..............."% t)
             eval_return = eval_policy(ma_agent, config.env_id, config.seed, config.eval_episodes, config.discrete_action, env_args=env_args)
 
         if (t % config.steps_per_update) < config.n_rollout_threads:
@@ -164,12 +202,13 @@ def offline_train(config):
                 nagents = ma_agent.nagents if config.env_id in ['simple_spread', 'HalfCheetah-v2'] else ma_agent.num_predators
 
                 for a_i in range(nagents):
+                    # print(a_i)
                     sample = replay_buffer.sample(config.batch_size, to_gpu=config.use_gpu)
 
                     ma_agent.update(sample, a_i)
 
-                ma_agent.update_all_targets()
-
+                ma_agent.update_all_targets()                                                                                     
+    print("training is done")
     env.close()
 
 if __name__ == '__main__':
@@ -186,9 +225,9 @@ if __name__ == '__main__':
     parser.add_argument("--buffer_length", default=int(1e6), type=int)
     parser.add_argument("--episode_length", default=25, type=int)
     parser.add_argument("--steps_per_update", default=100, type=int)
-    parser.add_argument("--batch_size", default=1024, type=int, help="Batch size for model training")
+    parser.add_argument("--batch_size", default=256, type=int, help="Batch size for model training")
     parser.add_argument("--hidden_dim", default=64, type=int)
-    parser.add_argument("--lr", default=0.01, type=float)
+    parser.add_argument("--lr", default=0.0001, type=float)
     parser.add_argument("--tau", default=0.01, type=float)
     parser.add_argument('--num_updates', default=1, type=int)
     parser.add_argument("--gamma", default=0.95, type=float)
@@ -203,12 +242,12 @@ if __name__ == '__main__':
     parser.add_argument('--num_steps', default=int(1e5), type=int)
 
     parser.add_argument('--cql', default=0, type=int)
-    parser.add_argument('--cql_alpha', default=1.0, type=float)
+    parser.add_argument('--cql_alpha', default=5, type=float)
     parser.add_argument("--lse_temp", default=1.0, type=float)
     parser.add_argument('--num_sampled_actions', default=10, type=int) 
     parser.add_argument('--cql_sample_noise_level', default=0.2, type=float)
 
-    parser.add_argument('--omar', default=0, type=int) 
+    parser.add_argument('--omar', default=1, type=int) 
     parser.add_argument('--omar_coe', default=1.0, type=float) 
     parser.add_argument('--omar_iters', default=3, type=int)
     parser.add_argument('--omar_mu', default=0., type=float)
@@ -228,6 +267,6 @@ if __name__ == '__main__':
         config.steps_per_update = 10
         config.eval_interval = 5000
         
-    config.dataset_dir = config.dataset_dir + '/' + config.env_id + '/' + config.data_type + '/' + 'seed_{}_data'.format(config.seed)
-        
+    # config.dataset_dir = config.dataset_dir + '/' + config.env_id + '/' + config.data_type + '/' + 'seed_{}_data'.format(config.seed)
+    config.dataset_dir = "data" 
     offline_train(config)

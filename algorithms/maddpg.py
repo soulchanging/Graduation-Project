@@ -96,6 +96,7 @@ class MATD3(object):
         Outputs:
             actions: List of actions for each agent
         """
+        
         res = []
         for i, obs in zip(range(self.nagents), observations):
             if self.env_id in ['simple_world', 'simple_tag']:
@@ -106,7 +107,10 @@ class MATD3(object):
                     prey_action = self.preys[i - self.num_predators].step(obs, explore=False)
                     res.append(prey_action)
             else:
-                action = self.agents[i].step(obs, explore=explore)
+                skill = torch.tensor([[6.0259748, 8.296433 ]])
+                in_  = torch.cat((obs,skill),dim = 1)
+                # print(in_)
+                action = self.agents[i].step(in_, explore=explore)
                 res.append(action)
         return res
 
@@ -158,12 +162,14 @@ class MATD3(object):
         if self.is_mamujoco:
             states, obs, acs, rews, next_states, next_obs, dones = sample
         else:
-            obs, acs, rews, next_obs, dones = sample
-
+            obs, acs, rews, next_obs, dones,skill = sample
+        # print(obs,acs[1],next_obs[1])
         curr_agent = self.agents[agent_i]
 
         curr_agent.critic_optimizer.zero_grad()
-        
+        obs[agent_i] = torch.cat((obs[agent_i],skill[agent_i]),dim = 1)
+        next_obs[agent_i] = torch.cat((next_obs[agent_i],skill[agent_i]),dim = 1)
+        # print(next_obs[agent_i])
         trgt_acs = curr_agent.target_policy(next_obs[agent_i])
         trgt_vf_in = torch.cat((next_obs[agent_i], trgt_acs), dim=1)
         
@@ -219,7 +225,7 @@ class MATD3(object):
 
                 policy_qvals1 = torch.logsumexp((random_qvals1 - random_acs_log_pi) / self.lse_temp, dim=1, keepdim=True) * self.lse_temp 
                 policy_qvals2 = torch.logsumexp((random_qvals2 - random_acs_log_pi) / self.lse_temp, dim=1, keepdim=True) * self.lse_temp
-
+                # print("u")
             dataset_q_vals1 = actual_value1
             dataset_q_vals2 = actual_value2
 
@@ -232,7 +238,7 @@ class MATD3(object):
         vf_loss.backward()
         if parallel:
             average_gradients(curr_agent.critic)
-        torch.nn.utils.clip_grad_norm(curr_agent.critic.parameters(), 0.5)
+        torch.nn.utils.clip_grad_norm_(curr_agent.critic.parameters(), 0.5)
         curr_agent.critic_optimizer.step()
 
 
@@ -277,7 +283,7 @@ class MATD3(object):
                     updated_sigma = torch.std(elite_acs, dim=1)
 
                     self.omar_mu = updated_mu
-                    self.omar_sigma = updated_sigma
+                    self.omar_sigma = updated_sigma + 1
 
                 top_qvals, top_inds = torch.topk(all_pred_qvals, 1, dim=1)
                 top_ac_inds = top_inds.repeat(1, 1, acs[agent_i].shape[1])
@@ -300,13 +306,16 @@ class MATD3(object):
                 self.omar_sigma = torch.cuda.FloatTensor(acs[agent_i].shape[0], acs[agent_i].shape[1]).zero_() + self.init_omar_sigma
 
                 formatted_obs = obs[agent_i].unsqueeze(1).repeat(1, self.omar_num_samples, 1).view(-1, obs[agent_i].shape[1])
-
+                
                 for iter_idx in range(self.omar_iters):
+                    # print(self.omar_mu.size())
+                
                     dist = torch.distributions.Normal(self.omar_mu, self.omar_sigma)
 
                     cem_sampled_acs = dist.sample((self.omar_num_samples,)).detach().permute(1, 0, 2).clamp(-self.max_action, self.max_action)
 
-                    formatted_cem_sampled_acs = cem_sampled_acs.view(-1, cem_sampled_acs.shape[-1])
+                    # formatted_cem_sampled_acs = cem_sampled_acs.view(-1, cem_sampled_acs.shape[-1])
+                    formatted_cem_sampled_acs = cem_sampled_acs.reshape(-1, cem_sampled_acs.shape[-1])
 
                     vf_in = torch.cat((formatted_obs, formatted_cem_sampled_acs), dim=1)
                     all_pred_qvals = curr_agent.critic.Q1(vf_in)
@@ -316,7 +325,8 @@ class MATD3(object):
                     self.omar_mu = updated_mu
 
                     updated_sigma = torch.sqrt(torch.mean((cem_sampled_acs - updated_mu.unsqueeze(1)) ** 2, 1))
-                    self.omar_sigma = updated_sigma
+                    # print(updated_sigma)
+                    self.omar_sigma = updated_sigma+0.0001
 
                 top_qvals, top_inds = torch.topk(all_pred_qvals, 1, dim=1)
                 top_ac_inds = top_inds.repeat(1, 1, acs[agent_i].shape[1])
@@ -346,9 +356,11 @@ class MATD3(object):
         pol_loss += (curr_pol_out ** 2).mean() * 1e-3
         
         pol_loss.backward()
+        # print("policy_loss",pol_loss)
+        # print("vf_loss",vf_loss)
         if parallel:
             average_gradients(curr_agent.policy)
-        torch.nn.utils.clip_grad_norm(curr_agent.policy.parameters(), 0.5)
+        torch.nn.utils.clip_grad_norm_(curr_agent.policy.parameters(), 0.5)
         curr_agent.policy_optimizer.step()
 
     def update_all_targets(self):
@@ -419,14 +431,14 @@ class MATD3(object):
             self.pol_dev = device
 
     @classmethod
-    def init_from_env(cls, env, env_id, data_type, env_info=None, agent_alg="td3", adversary_alg="ddpg", gamma=0.95, tau=0.01, lr=0.01, hidden_dim=64, cql=False, batch_size=None, lse_temp=None, num_sampled_actions=None, gaussian_noise_std=None, omar=None, omar_mu=None, omar_sigma=None, omar_num_samples=None, omar_num_elites=None, omar_iters=None):
+    def init_from_env(cls, env, env_id, data_type, env_info=None, agent_alg="td3", adversary_alg="ddpg", gamma=0.95, tau=0.01, lr=0.0001, hidden_dim=64, cql=False, batch_size=None, lse_temp=None, num_sampled_actions=None, gaussian_noise_std=None, omar=None, omar_mu=None, omar_sigma=None, omar_num_samples=None, omar_num_elites=None, omar_iters=None):
         """
         Instantiate instance of this class from multi-agent environment
         """
         if env_id in ['simple_tag', 'simple_world']:
             alg_types = [agent_alg if atype == 'adversary' else adversary_alg for atype in env.agent_types]
         elif env_id in ['simple_spread']:
-            alg_types = [agent_alg for atype in env.agent_types]
+            alg_types = [agent_alg for atype in range(env.num_agents)]
         elif env_id in ['HalfCheetah-v2']:
             alg_types = [agent_alg for _ in range(env_info['n_agents'])]
 
@@ -449,13 +461,15 @@ class MATD3(object):
                 all_n_actions.append(acsp.shape[0])
         else:
             for acsp, obsp, algtype, agent_type in zip(env.action_space, env.observation_space, alg_types, env.agent_types):
-                num_in_pol = obsp.shape[0]
+                latent_dim = 2
+                num_in_pol = obsp.shape[0] + latent_dim
                 num_out_pol = acsp.shape[0]
                 num_in_critic = num_in_pol + num_out_pol
 
                 if env_id in ['simple_spread']:
                     agent_init_params.append({'num_in_pol': num_in_pol, 'num_out_pol': num_out_pol, 'num_in_critic': num_in_critic})
                     agent_max_actions.append(acsp.high[0])
+        
                 else:
                     if agent_type == 'adversary':
                         agent_init_params.append({'num_in_pol': num_in_pol, 'num_out_pol': num_out_pol, 'num_in_critic': num_in_critic})

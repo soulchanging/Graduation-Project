@@ -20,7 +20,6 @@ class MLPNetwork(nn.Module):
         self.in_fn = nn.BatchNorm1d(input_dim)
         self.in_fn.weight.data.fill_(1)
         self.in_fn.bias.data.fill_(0)
-
         self.fc1 = nn.Linear(input_dim, hidden_dim)
         self.fc2 = nn.Linear(hidden_dim, hidden_dim)
         self.fc3 = nn.Linear(hidden_dim, out_dim)
@@ -29,7 +28,7 @@ class MLPNetwork(nn.Module):
         if constrain_out and not discrete_action:
             # initialize small to prevent saturation
             self.fc3.weight.data.uniform_(-3e-3, 3e-3)
-            self.out_fn = F.tanh
+            self.out_fn = torch.tanh
         else:  # logits for discrete action (will softmax later)
             self.out_fn = lambda x: x
 
@@ -78,7 +77,7 @@ class DoubleMLPNetwork(nn.Module):
             self.fc3.weight.data.uniform_(-3e-3, 3e-3)
             self.fc6.weight.data.uniform_(-3e-3, 3e-3)
 
-            self.out_fn = F.tanh
+            self.out_fn = torch.tanh
         else:  # logits for discrete action (will softmax later)
             self.out_fn = lambda x: x
 
